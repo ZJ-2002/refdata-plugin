@@ -1,0 +1,103 @@
+schema_version = 1
+plugin_name = "refdata"
+
+[image]
+reference = "localhost/autonomics/biotools-py@sha256:21e14c1582a9d4c261c0a23a11864293313ee2b49b9b7d85bcabc89210b48c7e"
+tag = "v1"
+upstream = "STRING-DB (stringdb-downloads.org) + MSigDB (Broad Institute)"
+license = "STRING: CC BY 4.0; MSigDB: Broad 自由学术许可（非商业）"
+
+# 说明：公共参考数据获取家族。补齐方案 §18.2 的参考数据缺口——
+# LINCS/CMap 参考谱在 GEO suppl（用 geo 家族的 geo_suppl 节点）、
+# PPI 网络与基因集库在本家族。全部零输入源节点、Egress、
+# 下载时边算 sha256 自锚。
+
+[[nodes]]
+kind = "string_ppi"
+desc = "Download STRING PPI network for an organism, mapped to gene symbols"
+doc = """
+按 organism/版本下载 STRING protein.links + protein.info，把 STRING ID
+映射成基因符号，按 combined_score ≥ min_score（默认 150 = STRING
+medium-confidence 下限，v12 尺度 0-1000）过滤。
+输出：string_edges.tsv（gene_a/gene_b 两列符号边表 —— network_proximity
+的直接输入）、string_edges_raw.tsv（含 combined_score 与原始 STRING ID）、
+string_gene_info.tsv（ID 映射表）、string_ppi.log（URL/字节数/sha256 自锚、
+过滤与未映射计数）。
+规则来源：方案 §18.2 网络邻近用 STRING 作 PPI 底图。
+失败处理：organism/version 不符 ^[0-9a-z.]+$ 或 HTTP 3 次重试失败 → 退出 2。
+解释边界：well-studied 基因度偏倚是 STRING 的固有混杂，解读在网络邻近层。
+"""
+timeout_secs = 7200
+artifact_prefix = "/artifacts/string_ppi"
+
+[nodes.ports]
+inputs = []
+outputs = [
+  { path = "string_edges.tsv", format = "string_edges" },
+  { path = "string_edges_raw.tsv", format = "string_edges_raw" },
+  { path = "string_gene_info.tsv", format = "string_gene_info" },
+  { path = "string_ppi.log", format = "refdata_log" },
+]
+
+[nodes.params]
+organism = { type = "string", default = "9606", doc = "NCBI taxon id, e.g. 9606 human / 10090 mouse" }
+version = { type = "string", default = "12.0", doc = "STRING release version" }
+min_score = { type = "int", default = 150, doc = "combined_score threshold (v12 scale 0-1000; 150 = medium)" }
+
+[nodes.command]
+interpreter = "python3"
+script_file = "scripts/string_ppi.py"
+
+[nodes.command.env]
+STRING_ORGANISM = "{{ organism }}"
+STRING_VERSION = "{{ version }}"
+STRING_MIN_SCORE = "{{ min_score }}"
+
+[nodes.resources]
+network = "egress"
+cpus = 1
+memory = "2g"
+pull_policy = "never"
+
+[[nodes]]
+kind = "msigdb_gmt"
+desc = "Download an MSigDB collection GMT and flatten it to a long set-membership table"
+doc = """
+按 release + collection 下载 MSigDB symbols GMT 并摊平成长表。
+输出：msigdb_sets.tsv（set_id/gene 两列长表 —— gene_set_score、netprox
+集合表的直接上游）、msigdb_set_info.tsv（set_id/description/n_genes）、
+msigdb_gmt.log（URL/sha256 自锚 + 集合计数）。
+用途：Hallmark/GO/KEGG 基因集（引擎 bundle 表无 MSigDB 的补位，方案
+§15.5-2 注释基因集、泛炎症 Hallmark 对照等）。
+失败处理：release 不符 YYYY.N.Hs|Mm 或 collection 不符 ^[a-z0-9_.]+$ →
+退出 2；HTTP 3 次重试失败 → 非零退出。
+解释边界：MSigDB 版本间基因集内容会漂移，release 钉死进 log 供复现。
+"""
+timeout_secs = 3600
+artifact_prefix = "/artifacts/msigdb_gmt"
+
+[nodes.ports]
+inputs = []
+outputs = [
+  { path = "msigdb_sets.tsv", format = "msigdb_sets" },
+  { path = "msigdb_set_info.tsv", format = "msigdb_set_info" },
+  { path = "msigdb_gmt.log", format = "refdata_log" },
+]
+
+[nodes.params]
+collection = { type = "string", doc = "MSigDB collection file stem, e.g. h.all, c5.go_bp, c2.cp.kegg_legacy" }
+release = { type = "string", default = "2026.1.Hs", doc = "MSigDB release, e.g. 2026.1.Hs (human) / 2026.1.Mm (mouse)" }
+
+[nodes.command]
+interpreter = "python3"
+script_file = "scripts/msigdb_gmt.py"
+
+[nodes.command.env]
+MSIGDB_COLLECTION = "{{ collection }}"
+MSIGDB_RELEASE = "{{ release }}"
+
+[nodes.resources]
+network = "egress"
+cpus = 1
+memory = "1g"
+pull_policy = "never"
