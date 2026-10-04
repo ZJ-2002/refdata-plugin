@@ -14,17 +14,25 @@ license = "STRING: CC BY 4.0; MSigDB: Broad 自由学术许可（非商业）"
 
 [[nodes]]
 kind = "string_ppi"
-desc = "Download STRING PPI network for an organism, mapped to gene symbols"
+desc = "Download STRING PPI network (functional or physical) for an organism, mapped to gene symbols"
 doc = """
-按 organism/版本下载 STRING protein.links + protein.info，把 STRING ID
-映射成基因符号，按 combined_score ≥ min_score（默认 150 = STRING
-medium-confidence 下限，v12 尺度 0-1000）过滤。
+按 organism/版本/网络类型下载 STRING 链接表 + protein.info，把 STRING ID
+映射成基因符号，按 combined_score ≥ min_score 过滤。
+网络类型（v3，审计 F11）：functional（默认）= protein.links.v<V> 功能
+关联底图（含间接证据）；physical = protein.physical.links.v<V> 仅物理
+互作底图。默认 functional 保持既有行为不静默变更；方案要物理底图必须
+显式 network_type=physical。
+分数口径（v3 修正）：官方档位 150=low / 400=medium / 700=high /
+900=highest（0-1000 整数尺度，即 web 界面 0.150/0.400/0.700/0.900 档；
+来源 string-db.org scores 页）。旧注释"150 = medium"是错的，默认
+min_score=150 实为 low 档下限。
 输出：string_edges.tsv（gene_a/gene_b 两列符号边表 —— network_proximity
 的直接输入）、string_edges_raw.tsv（含 combined_score 与原始 STRING ID）、
 string_gene_info.tsv（ID 映射表）、string_ppi.log（URL/字节数/sha256 自锚、
-过滤与未映射计数）。
+网络类型/release/分数阈值与官方档位映射、过滤与未映射计数）。
 规则来源：方案 §18.2 网络邻近用 STRING 作 PPI 底图。
-失败处理：organism/version 不符 ^[0-9a-z.]+$ 或 HTTP 3 次重试失败 → 退出 2。
+失败处理：organism/version 不符 ^[0-9a-z.]+$、network_type 不合法，
+或 HTTP 3 次重试失败 → 退出 2。
 解释边界：well-studied 基因度偏倚是 STRING 的固有混杂，解读在网络邻近层。
 """
 timeout_secs = 7200
@@ -42,7 +50,8 @@ outputs = [
 [nodes.params]
 organism = { type = "string", default = "9606", doc = "NCBI taxon id, e.g. 9606 human / 10090 mouse" }
 version = { type = "string", default = "12.0", doc = "STRING release version" }
-min_score = { type = "int", default = 150, doc = "combined_score threshold (v12 scale 0-1000; 150 = medium)" }
+network_type = { type = "string", default = "functional", doc = "functional (protein.links, 默认，功能关联) | physical (protein.physical.links, 仅物理互作)；要物理底图须显式传 physical" }
+min_score = { type = "int", default = 150, doc = "combined_score threshold (0-1000 scale; official tiers 150 low / 400 medium / 700 high / 900 highest — default 150 = low tier)" }
 
 [nodes.command]
 interpreter = "python3"
@@ -51,6 +60,7 @@ script_file = "scripts/string_ppi.py"
 [nodes.command.env]
 STRING_ORGANISM = "{{ organism }}"
 STRING_VERSION = "{{ version }}"
+STRING_NETWORK_TYPE = "{{ network_type }}"
 STRING_MIN_SCORE = "{{ min_score }}"
 
 [nodes.resources]
